@@ -1,0 +1,834 @@
+<!--
+	Copyright 2006 Google Inc.
+
+	Licensed under the Apache License, Version 2.0 (the "License");
+	you may not use this file except in compliance with the License.
+	You may obtain a copy of the License at
+
+	  http://www.apache.org/licenses/LICENSE-2.0
+
+	Unless required by applicable law or agreed to in writing, software
+	distributed under the License is distributed on an "AS IS" BASIS,
+	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+	See the License for the specific language governing permissions and
+	limitations under the License.
+-->
+<html>
+<head>
+	<title>ExplorerCanvas Example 1</title>
+	<!--[if IE]><script type="text/javascript" src="excanvas.js"></script><![endif]-->
+  <script type="text/javascript" src="sylvester.js"></script>
+	<script type="text/javascript">
+		/* -------------------------------------------------------------------- */
+
+		var canvas, ctx;
+		var canvasWidth, halfCanvasWidth;
+		var canvasHeight, halfCanvasHeight;
+
+		var space;  // 3D Engine
+		var scene;  // 3D Scene
+
+		/* -------------------------------------------------------------------- */
+
+		/**
+		 * Space is a simple 3D system.
+		 *
+		 * Y+ = up
+		 * Z+ = into screen
+		 * X+ = right
+		 */
+		function Space() {
+			this.m = this.createMatrixIdentity();
+			this.mStack = [];
+		}
+
+		Space.prototype.createMatrixIdentity = function() {
+			return [
+				[1, 0, 0, 0],
+				[0, 1, 0, 0],
+				[0, 0, 1, 0],
+				[0, 0, 0, 1]
+			];
+		}
+
+		/**
+		 * Multiplies two 4x4 matricies together.
+		 */
+		Space.prototype.matrixMultiply = function(m1, m2) {
+			var result = this.createMatrixIdentity();
+
+			var width = m1[0].length;
+			var height = m1.length;
+
+			if (width != m2.length) {
+				// error
+			}
+
+			for (var x = 0; x < width; x++) {
+				for (var y = 0; y < height; y++) {
+					var sum = 0;
+
+					for (var z = 0; z < width; z++) {
+						sum += m1[y][z] * m2[z][x];
+					}
+
+					result[y][x] = sum;
+				}
+			}
+
+			return result;
+		}
+
+		/**
+		 * Transforms a coordinate using the current transformation
+		 * matrix, then flattens it using the projection matrix.
+		 */
+		Space.prototype.flatten = function(point) {
+			var p = [[point.x, point.y, point.z, 1]];
+			var pm = this.matrixMultiply(p, this.m);
+
+			point.tx = pm[0][0];
+			point.ty = pm[0][1];
+			point.tz = pm[0][2];
+
+			// lazy projection
+			point.fx = halfCanvasWidth + (canvasWidth * point.tx / point.tz);
+			point.fy = halfCanvasHeight -(canvasWidth * point.ty / point.tz);
+		}
+
+		/**
+		 * Translate (move) the current transformation matrix
+		 */
+		Space.prototype.translate = function(x, y, z) {
+			var m = [
+				[1, 0, 0, 0],
+				[0, 1, 0, 0],
+				[0, 0, 1, 0],
+				[x, y, z, 1]
+			];
+
+			this.m = this.matrixMultiply(m, this.m);
+		}
+
+		/**
+		 * Rotate the current transformation matrix. Rotations are
+		 * world-oriented, and occur in y,x,z order.
+		 */
+		Space.prototype.rotate = function(x, y, z) {
+			if (y) {
+				var cosY = snapTo(Math.cos(y),0);
+				var sinY = snapTo(Math.sin(y),0);
+				var rotY = [
+					[cosY, 0, sinY, 0],
+					[0, 1, 0, 0],
+					[-sinY, 0, cosY, 0],
+					[0, 0, 0, 1]
+				];
+
+				this.m = this.matrixMultiply(this.m, rotY);
+			}
+
+			if (x) {
+				var cosX = snapTo(Math.cos(x),0);
+				var sinX = snapTo(Math.sin(x),0);
+				var rotX = [
+					[1, 0, 0, 0],
+					[0, cosX, -sinX, 0],
+					[0, sinX, cosX,0],
+					[0, 0, 0, 1]
+				];
+				this.m = this.matrixMultiply(this.m, rotX);
+			}
+
+			if (z) {
+				var cosZ = snapTo(Math.cos(z),0);
+				var sinZ = snapTo(Math.sin(z),0);
+				var rotZ = [
+					[cosZ, -sinZ, 0, 0],
+					[sinZ, cosZ, 0, 0],
+					[0, 0, 1, 0],
+					[0, 0, 0, 1]
+				];
+
+				this.m = this.matrixMultiply(this.m, rotZ);
+			}
+		}
+
+		/**
+		 * Pushes the current transformation onto the stack
+		 */
+		Space.prototype.push = function() {
+			this.mStack.push(this.m);
+			this.m = [
+				[this.m[0][0], this.m[0][1], this.m[0][2], this.m[0][3]],
+				[this.m[1][0], this.m[1][1], this.m[1][2], this.m[1][3]],
+				[this.m[2][0], this.m[2][1], this.m[2][2], this.m[2][3]],
+				[this.m[3][0], this.m[3][1], this.m[3][2], this.m[3][3]]
+			];
+		}
+
+		/**
+		 * Pops the end off the transformation stack
+		 */
+		Space.prototype.pop = function() {
+			this.m = this.mStack.pop();
+		}
+
+		/* -------------------------------------------------------------------- */
+
+		/**
+		 * A 3d coordinate
+		 */
+		function Point(x, y, z) {
+			this.x = x;
+			this.y = y;
+			this.z = z;
+
+			// Relative to camera coordinates
+			this.tx;
+			this.ty;
+			this.tz;
+
+			// Flattened coordinates
+			this.fx;
+			this.fy;
+		}
+
+		/**
+		 * A Shape is made up of polygons
+		 */
+		function Shape() {
+			this.points = [];
+			this.polygons = [];
+		}
+
+		/**
+		 * Draws the shape
+		 */
+		Shape.prototype.draw = function(drawlist) {
+			for (var i = 0; i< this.points.length; i++) {
+				space.flatten(this.points[i]);
+			}
+
+			for (var i = 0; i< this.polygons.length; i++) {
+				var poly = this.polygons[i]; // convenience
+
+				space.flatten(poly.origin);
+
+				// lazy backface culling
+				if (poly.normal && this.backface) {
+					space.flatten(poly.normal);
+
+					var originDist = Math.pow(poly.origin.tx, 2)
+												 + Math.pow(poly.origin.ty, 2)
+												 + Math.pow(poly.origin.tz, 2);
+
+					var normalDist = Math.pow(poly.normal.tx, 2)
+												 + Math.pow(poly.normal.ty, 2)
+												 + Math.pow(poly.normal.tz, 2);
+
+					if(originDist > normalDist) {
+						drawlist.push(poly);
+					}
+				} else {
+					drawlist.push(poly);
+				}
+			}
+		}
+
+		/**
+		 * A polygon is a connection of points in the shape object. You
+		 * should probably try to make them coplanar.
+		 */
+		function Polygon(points, normal, backface, type, color) {
+			this.points = points;
+
+			this.origin = new Point(0, 0, 0);
+			for(var i = 0; i < this.points.length; i++) {
+				this.origin.x += this.points[i].x;
+				this.origin.y += this.points[i].y;
+				this.origin.z += this.points[i].z;
+			}
+
+			this.origin.x /= this.points.length;
+			this.origin.y /= this.points.length;
+			this.origin.z /= this.points.length;
+
+			if (normal) {
+				this.normal = new Point(this.origin.x + normal.x,
+																this.origin.y + normal.y,
+																this.origin.z + normal.z);
+			} else {
+				this.normal = null;
+			}
+
+			this.backface = backface;
+			this.type = type;
+			this.color = color;
+		}
+
+		Polygon.SOLID = 0;
+		Polygon.WIRE = 1;
+
+		/**
+		 * Draws the polygon. Assumes that the points have already been
+		 * flattened.
+		 */
+		Polygon.prototype.draw = function() {
+      
+      if(!new Number(this.points[0].fx).toString().match(/\d+/))
+      {
+        return;
+      }
+      if(!new Number(this.points[0].fy).toString().match(/\d+/))
+      {
+        return;
+      }
+      if(!new Number(this.points[1].fx).toString().match(/\d+/))
+      {
+        return;
+      }
+      if(!new Number(this.points[1].fy).toString().match(/\d+/))
+      {
+        return;
+      }
+      if(!new Number(this.points[2].fx).toString().match(/\d+/))
+      {
+        return;
+      }
+      if(!new Number(this.points[2].fy).toString().match(/\d+/))
+      {
+        return;
+      }
+      if(!new Number(this.points[3].fx).toString().match(/\d+/))
+      {
+        return;
+      }
+      if(!new Number(this.points[3].fy).toString().match(/\d+/))
+      {
+        return;
+      }
+      if(this.points[0].tz < 0 && this.points[1].tz < 0 && this.points[2].tz < 0 && this.points[3].tz < 0)
+      {
+        return;
+      }
+      /*if(this.points[0].fy < 10 || this.points[1].fy < 10 || this.points[2].fy < 10 || this.points[3].fy < 10)
+      {
+        //alert([this.points[0].tx,this.points[1].tx , this.points[2].tx , this.points[3].tx])
+      }*/
+    //Cheap workaround
+    var vis = false;
+    for(var n = 0; n < this.points.length; n++)
+    {
+      if((this.points[n].fx > 0 && this.points[n].fx < canvasWidth) &&  (this.points[n].fy > 0 && this.points[n].fy < canvasHeight))
+      {
+        vis = true;
+        break;
+      }
+    }
+    if(!vis)
+    {
+      return;
+    }
+      
+     /* if(selfIntersectingQuadrilateral(this.points))
+      {
+        return;
+      }*/
+      
+     //alert([this.points[0].tx,this.points[0].tz,this.points[1].tx,this.points[1].tz,this.points[2].tx,this.points[2].tz,this.points[3].tx,this.points[3].tz])
+      
+			ctx.beginPath();
+			ctx.moveTo(this.points[0].fx, this.points[0].fy);
+
+			for(var i = 0; i < this.points.length; i++) {
+				ctx.lineTo(this.points[i].fx, this.points[i].fy);
+			}
+
+			ctx.closePath();
+
+			var color = this.color;
+
+			/*
+			// Do lighting here
+			lightvector = Math.abs(this.normal.x + this.normal.y);
+			if(lightvector > 1) {
+				lightvector = 1;
+			}
+
+			color[0] = (color[0] * lightvector).toString();
+			color[1] = (color[1] * lightvector).toString();
+			color[2] = (color[2] * lightvector).toString();
+			*/
+
+			if (color.length > 3) {
+				var style = ["rgba(",
+				             color[0], ",",
+				             color[1], ",",
+				             color[2], ",",
+				             color[3], ")"].join("");
+			} else {
+				var style = ["rgb(",
+				             color[0], ",",
+				             color[1], ",",
+				             color[2], ")"].join("");
+			}
+
+			if (this.type == Polygon.SOLID) {
+				ctx.fillStyle = style;
+				ctx.fill();
+			} else if (this.type == Polygon.WIRE) {
+				ctx.strokeStyle = style;
+				ctx.stroke();
+			}
+		}
+
+		/* -------------------------------------------------------------------- */
+
+		/**
+		 * Scene describes the 3D environment
+		 */
+		function Scene() {
+			this.shapes = {};
+			this.camera = new Point(0, 0, 0);
+			this.cameraTarget = new Point(0, 0, 0);
+			this.cameraRotation = 0;
+
+			this.drawlist = [];
+		}
+
+		/**
+		 * Draw the world
+		 */
+		Scene.prototype.draw = function() {
+			space.push();
+
+			// Camera transformation
+			space.translate(
+				-this.camera.x,
+				-this.camera.y,
+				-this.camera.z
+			);
+
+			// Camera rotation
+			var xdiff = this.cameraTarget.x - this.camera.x;
+			var ydiff = this.cameraTarget.y - this.camera.y;
+			var zdiff = this.cameraTarget.z - this.camera.z;
+
+			var xzdist = Math.sqrt(Math.pow(xdiff, 2) + Math.pow(zdiff, 2));
+
+			var xrot = snapTo(-Math.atan2(ydiff, xzdist),0); // up/down rotation
+			var yrot =  snapTo(Math.atan2(xdiff, zdiff),0);  // left/right rotation
+
+			space.rotate(xrot, yrot, this.cameraRotation);
+
+			// Drawing
+			this.drawlist = [];
+
+			for(var i in this.shapes) {
+				this.shapes[i].draw(this.drawlist);
+			}
+
+			// Depth sorting (warning: this is only enough to drive this demo - feel
+			// free to contribute a better system).
+			this.drawlist.sort(function (poly1, poly2) {
+				return poly2.origin.tz - poly1.origin.tz;
+			});
+
+			for (var i = 0; i < this.drawlist.length; i++) {
+				this.drawlist[i].draw();
+			}
+
+			space.pop();
+		}
+
+		/* -------------------------------------------------------------------- */
+
+
+		var playerHeight = 10;
+		var tileWidth = 15;
+    var roomHeight = 20;
+    
+    var floorColor = [255,0,0];
+    var ceilingColor = [0,255,0];
+    var wallColor = [0,255,255];
+    
+    var arenaSize = 15;
+    var roomSize = 5;
+    
+    var playerX = 0;
+    var playerZ = 0;
+    var orientation = 0;
+      
+    var orientations = {
+              0 : [0,1],
+              1 : [1,0],
+              2 : [0,-1],
+              3 : [-1,0]
+    }
+    
+    var interiorWallGaps = [[[5,4],[4,4]],[[10,2],[9,2]],[[2,5],[2,4]],[[7,5],[7,4]],[[10,5],[10,4]],[[5,7],[4,7]],[[10,5],[9,5]],[[4,10],[4,9]],
+                                    [[9,10],[9,9]],[[12,10],[12,9]],[[5,12],[4,12]],[[10,10],[9,10]]];
+    var src = "array(";
+    for(var i in interiorWallGaps)
+    {
+      src += "" + i + "=>array(";
+      for(var j in interiorWallGaps[i])
+      {
+        src += "" + j + "=>array(";
+        for(var k in interiorWallGaps[i][j])
+        {
+          src += "" + k + "=>" + interiorWallGaps[i][j][k];
+          if(k == 0)
+          {
+            src += ",";
+          }
+        }
+        src += ")";
+        if(j == 0)
+        {
+          src += ",";
+        }
+      }
+      src += ")"
+      if(i + 1 < interiorWallGaps.length)
+      {
+        src += ",";
+      }
+    }
+    src += ")";
+    document.write(src);
+    
+    var epsilon = 1e-6;
+    
+    function snapTo(num, val)
+    {
+      if(Math.abs(num - val) < epsilon)
+      {
+        return val;
+      }
+      return num
+    }
+    
+    function Player(x, z, direction)
+    {
+        this.x = x;
+        this.z = z;
+        this.dir = direction; //radians
+    }
+    
+    function Dimension(width,height,depth)
+    {
+      this.width = width;
+      this.height = height;
+      this.depth = depth;
+    }
+    
+    Dimension.prototype.toVector = function()
+    {
+      return Vector.create([this.width,this.height,this.depth]);
+    }
+    
+    Vector.prototype.toPoint = function()
+    {
+      return new Point(this.elements[0],this.elements[1],this.elements[2]);
+    }
+    
+    Point.prototype.toVector = function()
+    {
+      return $V([this.x,this.y,this.z]);
+    }
+    
+    Point.prototype.toFlattenedVector = function()
+    {
+      return $V([this.fx,this.fy]);
+    }
+    
+    Math.signum = function(n)
+    {
+      if(n < 0)
+        return -1;
+      else if(n > 0)
+        return 1;
+      else
+        return 0;
+    }
+    
+    Array.prototype.equals = function(oth)
+    {
+      for(var i = 0; i < this.length; i++)
+      {
+        if(this[i].equals)
+        {
+          if(!this[i].equals(oth[i]))
+            return false;
+        }
+        else
+        {
+          if(this[i] != oth[i])
+            return false
+        }
+      }
+      return true;
+    }
+    
+    //Start is vector
+    //Dir is Vector
+    //Dim is Dimension
+    //Normal is vector
+    function segmentedFlatSurface(start,dir,dim, normal, backface, type, color)
+    {
+        var rotatedDir = null;
+        var rotatedDim;
+        var angle = normal.angleFrom(Vector.create([0,1,0]));
+        if(angle != 0)
+        {
+          var axis = Line.create([0,0,0],normal.cross(Vector.create([0,1,0])));
+          rotatedDir = dir.rotate(angle,axis);
+          rotatedDim = dim.toVector().rotate(angle,axis);
+        }
+        else
+        {
+          rotatedDir = dir;
+          rotatedDim = dim.toVector();
+        }
+        
+        for(var i = 0; i <= Math.max(dim.width,dim.height,dim.depth); i++)
+        {
+          rotatedDim = rotatedDim.snapTo(i);
+          rotatedDim = rotatedDim.snapTo(-i);
+        }
+        
+        rotatedDim = $V([Math.abs(rotatedDim.elements[0]),Math.abs(rotatedDim.elements[1]),Math.abs(rotatedDim.elements[2])]);
+        
+        var dx = rotatedDir.elements[0];
+        var dy = rotatedDir.elements[1];
+        var dz = rotatedDir.elements[2];
+        
+        var shapes = [];
+        
+        var xs = Math.signum(rotatedDim.elements[0]);
+        var ys = Math.signum(rotatedDim.elements[1]);
+        var zs = Math.signum(rotatedDim.elements[2]);
+        
+        //nx/ny/nz=number of times moved in the x/y/z direction
+        for(var nx = 0; nx < rotatedDim.elements[0]; nx++)
+        {
+          for(var ny = 0; ny < rotatedDim.elements[1]; ny++)
+          {
+              for(var nz = 0; nz < rotatedDim.elements[2]; nz++)
+              {
+                var s = new Shape();
+                var p = s.points;
+                
+                var a = $V([nx*dx,0,nz*dz]);
+                var b = $V([nx*dx,0,(nz+1)*dz]);
+                var c = $V([(nx+1)*dx,0,(nz+1)*dz]);
+                var d = $V([(nx+1)*dx,0,nz*dz]);
+                
+                if(angle!=0)
+                {
+                  a = a.rotate(-angle,axis);
+                  b = b.rotate(-angle,axis);
+                  c = c.rotate(-angle,axis);
+                  d = d.rotate(-angle,axis);
+                }
+                
+                a = a.add(start);
+                b = b.add(start);
+                c = c.add(start);
+                d = d.add(start);
+                
+                
+                p[0] = a.toPoint();
+                p[1] = b.toPoint();
+                p[2] = c.toPoint();
+                p[3] = d.toPoint();
+                
+                s.polygons.push(new Polygon(
+                  [p[0],p[1],p[2],p[3]],
+                 normal.toPoint(),
+                 backface,
+                 type,
+                 color)
+                );
+                
+                shapes.push(s);                 
+              }
+          }
+        }
+        return shapes;
+    }
+    
+		function load()
+    {
+    
+			// Init drawing system
+			canvas = document.getElementById("cv");
+			ctx = canvas.getContext("2d");
+
+			canvasWidth = canvas.width;
+			canvasHeight = canvas.height;
+			halfCanvasWidth = canvasWidth * 0.5;
+			halfCanvasHeight = canvasHeight * 0.5;
+
+			// Init 3D components
+			space = new Space();
+			scene = new Scene();
+
+      var floor = segmentedFlatSurface($V([0,0,0]),$V([tileWidth,0,tileWidth]),new Dimension(arenaSize,1,arenaSize),$V([0,1,0]),true,Polygon.SOLID, floorColor);      
+      
+      var walls = [];
+      
+      walls = walls.concat(segmentedFlatSurface($V([0,0,0]),$V([0,roomHeight/2,tileWidth/2]), new Dimension(1,2,arenaSize*2),$V([1,0,0]),true,Polygon.SOLID,wallColor));
+      walls = walls.concat(segmentedFlatSurface($V([0,0,tileWidth*arenaSize]),$V([tileWidth/2,roomHeight/2,0]), new Dimension(arenaSize*2,2,1),$V([0,0,-1]),true,Polygon.SOLID,wallColor));
+      walls = walls.concat(segmentedFlatSurface($V([tileWidth*arenaSize,0,0]),$V([0,roomHeight/2,tileWidth/2]), new Dimension(1,2,arenaSize*2),$V([-1,0,0]),true,Polygon.SOLID,wallColor));
+      walls = walls.concat(segmentedFlatSurface($V([0,0,0]),$V([tileWidth/2,roomHeight/2,0]), new Dimension(arenaSize*2,2,1),$V([0,0,1]),true,Polygon.SOLID,wallColor));
+      
+      var interiorWalls = [];
+      
+      for(var i = roomSize; i < arenaSize; i += roomSize)
+      {
+        for(var j = 0; j < arenaSize; j++)
+        {
+          interiorWalls.push([[i,j],[i-1,j]]);
+        }
+      }
+      
+      for(var i = roomSize; i < arenaSize; i += roomSize)
+      {
+        for(var j = 0; j < arenaSize; j++)
+        {
+          interiorWalls.push([[j,i],[j,i-1]]);
+        }
+      }
+      
+      for(var i = 0; i < interiorWalls.length; i++)
+      {
+        var wall = interiorWalls[i];
+        var gap = false;
+        for(var j = 0; j < interiorWallGaps.length; j++)
+        {
+          if(wall.equals(interiorWallGaps[j]))
+          {
+            gap = true;
+            break;
+          }
+        }
+        if(gap)
+        {
+          continue;
+        }
+       
+        if(wall[0][0] == wall[1][0]) // horizontal wall
+        {
+          var x = wall[0][0]
+          var y = wall[1][1]+1
+          walls = walls.concat(segmentedFlatSurface($V([x*tileWidth,0,y*tileWidth]),$V([tileWidth/2,roomHeight/2,0]), new Dimension(2,2,1),$V([0,0,1]),true,Polygon.SOLID,wallColor));
+        }
+        else //vertical wall
+        {
+          var x = wall[0][0]
+          var y = wall[0][1]
+          walls = walls.concat(segmentedFlatSurface($V([x*tileWidth,0,y*tileWidth]),$V([0,roomHeight/2,tileWidth/2]), new Dimension(1,2,2),$V([1,0,0]),true,Polygon.SOLID,wallColor));
+        }
+        
+      }
+      
+      var ceiling = segmentedFlatSurface($V([0,roomHeight,0]),$V([tileWidth,0,tileWidth]),new Dimension(arenaSize,1,arenaSize),$V([0,1,0]),true,Polygon.SOLID, ceilingColor);
+     
+      var surfaces = floor.concat(ceiling).concat(walls);
+      for(var i = 0; i < surfaces.length; i++)
+      {
+        scene.shapes[i] = surfaces[i];
+      }
+
+      draw();
+		}
+    
+    function draw()
+    {
+			ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+			scene.camera.x = playerX*tileWidth+tileWidth/2;
+			scene.camera.y = playerHeight;
+			scene.camera.z = playerZ*tileWidth+tileWidth/2;
+      
+      scene.cameraTarget.x = playerX*tileWidth+tileWidth/2 + 5*orientations[orientation][0]
+      scene.cameraTarget.y = playerHeight;
+      scene.cameraTarget.z = playerZ*tileWidth+tileWidth/2 + 5*orientations[orientation][1]
+
+			scene.cameraRotation = 0;
+			scene.draw();
+    }
+    
+    function left()
+    {
+      orientation = (orientation + 3) % 4
+      draw();
+    }
+    
+    function right()
+    {
+      orientation++;
+      orientation %= 4;
+      draw();
+    }
+    
+    function forward()
+    {
+      var newX = playerX + orientations[orientation][0];
+      var newZ = playerZ + orientations[orientation][1];
+      
+      if(newX >= 0 && newX < arenaSize && newZ >= 0 && newZ < arenaSize)
+      {
+        playerX = newX;
+        playerZ = newZ;
+        draw();
+      }
+    }
+    
+    function back()
+    {
+      var newX = playerX - orientations[orientation][0];
+      var newZ = playerZ - orientations[orientation][1];
+      
+      if(newX >= 0 && newX < arenaSize && newZ >= 0 && newZ < arenaSize)
+      {
+        playerX = newX;
+        playerZ = newZ;
+        draw();
+      }
+    }
+
+		/* -------------------------------------------------------------------- */
+	</script>
+	<style>
+	body {
+		background-color:black;
+		margin:50px;
+		text-align:center;
+	}
+	</style>
+</head>
+<body onload="load();">
+  <canvas id="cv" width="600" height="600"></canvas>
+  <table style="width: 200px; height: 200px">
+  <tr>
+    <td>&nbsp;</td>
+    <td><input type="submit" value="^" id="up_butt" onclick="forward()"/></td>
+    <td>&nbsp;</td>
+  </tr>
+  <tr>
+    <td><input type="submit" value="<-" id="left_butt" onclick="left()"/></td>
+    <td>&nbsp;</td>
+    <td><input type="submit" value="->" id="right_butt" onclick="right()"/></td>
+  </tr>
+  <tr>
+    <td>&nbsp;</td>
+    <td><input type="submit" value="\/" id="down_butt" onclick="back()"/></td>
+    <td>&nbsp;</td>
+  </tr>
+  </table>
+</body>
+</html>

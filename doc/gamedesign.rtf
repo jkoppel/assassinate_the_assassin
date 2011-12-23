@@ -1,0 +1,60 @@
+{\rtf1\ansi\ansicpg1252\cocoartf1038\cocoasubrtf360
+{\fonttbl\f0\fmodern\fcharset0 Courier;}
+{\colortbl;\red255\green255\blue255;}
+\vieww12000\viewh13300\viewkind0
+\deftab720
+\pard\pardeftab720\ql\qnatural
+
+\f0\fs20 \cf0 "Assassinate the assassin" design:\
+\
+Gameplay is turn-based, 3D, first person. VERY SIMPLE 3D (JavaScript-based rendering). Designed for 2 players; might work with more.\
+\
+Rooms are in a 3x3 grid - no hallways.\
+\
+Each room is 5x5 tiles. You can  move diagonally for two actions. Doing so can be used to enter rooms (and avoid traps).\
+\
+In other words, the walls are wafer-thin.In the floorplan below, pretend the spaces don't exist.\
+\
+You have 8 actions per turn.\
+\
+Floorplan:\
+\
+__________________\
+|#####|#####|#####|\
+|#####|#####|#####|\
+|#####|##### #####|\
+|#####|#####|#####|\
+|##### #####|#####|\
+|-- --+-- --+ ----|\
+|#####|#####|#####|\
+|#####|#####|#####|\
+|#####|##### #####|\
+|#####|#####|#####|\
+|##### #####|#####|\
+|---- +---- +-- --|\
+|#####|##### #####|\
+|#####|#####|#####|\
+|##### #####|#####|\
+|#####|#####|#####|\
+|#####|#####|#####|\
+__________________\
+\
+Objective: Find and kill the opponent\
+\
+Available actions: \
+\
+(cost-effect)\
+\
+3-Turn 90 degress\
+1-Move one tile, not turning\
+8-activate cloak. This makes you invisible, but the next turn you will be seen as a cloud of smoke\
+                -Any action other than moving, turning, and Backstabbing(?) decloaks you. Cannot cloak with sword out\
+8-Prepare life detector: Let's you use Find Opponent on the next turn only\
+8-Find Opponent. Must have prepared Life Detector. Shows you the location of your opponent. Either just the room, or the exact location.\
+4-wield sword or dagger\
+4-Backstab - kills with dagger. Must be directly behind target. Back-to-wall techniques are useful.\
+4-Kill with sword. Has a 2-tile range - cannot attack backwards. If your opponent has a sword out also and you are not behind him, your attack fails.\
+7-Lay stun bomb on adjacent tile. The next player to walk  into it detonates it, losing 2 turns - including you. \
+4-Ready throwing knife. Readies a line on which you will throw the knife. Let's you throw it next turn (doing this, you keep previous weapons out).\
+8-Throw throwing knife. Sends the readied knife on its path. Kills the first person it hits.\
+}
